@@ -60,10 +60,10 @@ function scheduleSyncToServer() {
 
 /* ── State ── */
 let state = {
-  quests: [],      // top-level quests
+  quests: [],
   activeTab: 'main',
   editingQuestId: null,
-  detailQuestId: null,
+  expandedQuestId: null,
 };
 
 /* ── Persistence ── */
@@ -179,11 +179,11 @@ function renderQuestList() {
 
 function buildQuestCard(q) {
   const div = document.createElement('div');
-  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active ? ' inactive' : ''}`;
+  const isExpanded = q.id === state.expandedQuestId;
+  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active ? ' inactive' : ''}${isExpanded ? ' expanded' : ''}`;
   div.dataset.id = q.id;
 
   const dl = q.deadline ? formatDeadline(q.deadline) : null;
-  const pct = progressPercent(q.progress);
   const subCount = q.subQuests?.length || 0;
 
   let deadlineBadge = '';
@@ -199,48 +199,32 @@ function buildQuestCard(q) {
     </button>`;
   }
 
-  let nextGoalHtml = '';
-  if (q.nextGoal) {
-    nextGoalHtml = `<div class="quest-next-goal"><span class="quest-next-goal-icon">⚡</span><span>${escHtml(q.nextGoal)}</span></div>`;
-  }
-
-  let progressHtml = '';
-  if (pct !== null) {
-    progressHtml = `
-      <div class="progress-wrap">
-        <div class="progress-label">
-          <span>Прогресс</span>
-          <span>${progressLabel(q.progress)}</span>
-        </div>
-        <div class="progress-bar-track">
-          <div class="progress-bar-fill" style="width:${pct}%"></div>
-        </div>
-      </div>`;
-  }
-
-  let subHtml = '';
-  if (subCount > 0) {
-    subHtml = `<div class="sub-count"><span class="sub-count-icon">📋</span><span>${subCount} вложенных квестов</span></div>`;
-  }
+  const subBadge = subCount > 0 ? `<span class="quest-sub-badge">📋 ${subCount}</span>` : '';
+  const icon = q.type === 'main' ? '⚔️' : '📜';
 
   div.innerHTML = `
-    <div class="quest-card-header">
-      <div class="quest-card-title-wrap">
+    <div class="quest-card-top">
+      <div class="quest-icon">${icon}</div>
+      <div class="quest-info">
         <div class="quest-type-label">${q.type === 'main' ? 'Главный квест' : 'Доп. квест'}</div>
         <div class="quest-title">${escHtml(q.title)}</div>
+        <div class="quest-card-meta">${deadlineBadge}${activeBadge}${subBadge}</div>
       </div>
-      <div class="quest-card-meta">
-        ${deadlineBadge}
-        ${activeBadge}
-      </div>
+      <button class="quest-chevron" aria-label="Развернуть">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
     </div>
-    ${nextGoalHtml}
-    ${progressHtml}
-    ${subHtml}`;
+    <div class="quest-card-body">
+      <div class="quest-card-body-inner">
+        ${buildQuestBody(q)}
+      </div>
+    </div>`;
 
-  div.addEventListener('click', e => {
+  div.querySelector('.quest-card-top').addEventListener('click', e => {
     if (e.target.closest('[data-action="toggle"]')) return;
-    openDetail(q.id);
+    toggleExpand(q.id);
   });
 
   const toggleBtn = div.querySelector('[data-action="toggle"]');
@@ -251,7 +235,134 @@ function buildQuestCard(q) {
     });
   }
 
+  div.querySelector('.btn-quest-edit').addEventListener('click', e => {
+    e.stopPropagation();
+    openEditModal(q.id);
+  });
+
+  div.querySelector('.btn-quest-delete').addEventListener('click', e => {
+    e.stopPropagation();
+    if (confirm(`Удалить квест «${q.title}»?`)) {
+      state.expandedQuestId = null;
+      deleteQuest(q.id);
+      showToast('Квест удалён', 'success');
+    }
+  });
+
+  div.querySelector('.btn-quest-add-sub').addEventListener('click', e => {
+    e.stopPropagation();
+    openAddModal('side', q.id);
+  });
+
+  div.querySelectorAll('.sub-quest-item-content[data-sub-id]').forEach(content => {
+    content.addEventListener('click', e => {
+      e.stopPropagation();
+      openEditModal(content.dataset.subId);
+    });
+  });
+
+  div.querySelectorAll('.sub-delete-btn[data-sub-id]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const sub = findQuest(btn.dataset.subId);
+      if (sub && confirm(`Удалить «${sub.title}»?`)) {
+        deleteSubQuest(q.id, btn.dataset.subId);
+      }
+    });
+  });
+
   return div;
+}
+
+function buildQuestBody(q) {
+  const pct = progressPercent(q.progress);
+  let html = '';
+
+  if (q.description) {
+    html += `<div class="qb-description">${escHtml(q.description)}</div>`;
+  }
+
+  if (q.nextGoal) {
+    html += `<div class="qb-section">
+      <div class="qb-label">⚡ Ближайшая цель</div>
+      <div class="qb-value">${escHtml(q.nextGoal)}</div>
+    </div>`;
+  }
+
+  if (pct !== null) {
+    html += `<div class="qb-section">
+      <div class="qb-label">📊 Прогресс</div>
+      <div class="progress-label">
+        <span>${progressLabel(q.progress)}</span><span>${pct}%</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" style="width:${pct}%"></div>
+      </div>
+    </div>`;
+  }
+
+  html += `<div class="qb-section">
+    <div class="qb-label-row">
+      <span>📋 Вложенные квесты</span>
+      <button class="btn-add-sub btn-quest-add-sub"${q.subQuests.length >= MAX_SUB ? ' disabled' : ''}>+ Добавить</button>
+    </div>
+    <div class="qb-sub-list">${buildSubQuestItems(q)}</div>
+  </div>`;
+
+  html += `<div class="qb-actions">
+    <button class="btn btn-secondary btn-quest-edit">Редактировать</button>
+    <button class="btn btn-danger btn-quest-delete">Удалить квест</button>
+  </div>`;
+
+  return html;
+}
+
+function buildSubQuestItems(q) {
+  if (!q.subQuests.length) {
+    return '<p class="sub-quest-empty">Нет вложенных квестов</p>';
+  }
+  return q.subQuests.map(sub => {
+    const pct = progressPercent(sub.progress);
+    return `<div class="sub-quest-item">
+      <div class="sub-quest-item-content" data-sub-id="${sub.id}">
+        <div class="sub-quest-item-title">${escHtml(sub.title)}</div>
+        ${sub.nextGoal ? `<div class="sub-quest-item-goal">⚡ ${escHtml(sub.nextGoal)}</div>` : ''}
+        ${pct !== null ? `
+          <div class="sub-quest-progress">
+            <div class="progress-bar-track" style="margin-top:6px">
+              <div class="progress-bar-fill" style="width:${pct}%"></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:3px">${progressLabel(sub.progress)}</div>
+          </div>` : ''}
+      </div>
+      <div class="sub-quest-item-actions">
+        <button class="sub-delete-btn" data-sub-id="${sub.id}" title="Удалить">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+          </svg>
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleExpand(id) {
+  const prevId = state.expandedQuestId;
+
+  if (prevId && prevId !== id) {
+    const prevCard = document.querySelector(`.quest-card[data-id="${prevId}"]`);
+    if (prevCard) prevCard.classList.remove('expanded');
+  }
+
+  if (prevId === id) {
+    state.expandedQuestId = null;
+    const card = document.querySelector(`.quest-card[data-id="${id}"]`);
+    if (card) card.classList.remove('expanded');
+  } else {
+    state.expandedQuestId = id;
+    const card = document.querySelector(`.quest-card[data-id="${id}"]`);
+    if (card) card.classList.add('expanded');
+  }
 }
 
 /* ── Actions ── */
@@ -405,13 +516,10 @@ function saveQuestForm() {
     state.quests.push(q);
   }
 
+  if (parentId) state.expandedQuestId = parentId;
   save();
   render();
   closeQuestModal();
-
-  if (parentId) {
-    openDetail(parentId);
-  }
   showToast('Квест сохранён ✓', 'success');
 }
 
@@ -434,122 +542,14 @@ function updateProgressFields() {
   }
 }
 
-/* ── Detail Modal ── */
-function openDetail(id) {
-  const q = findQuest(id);
-  if (!q) return;
-  state.detailQuestId = id;
-
-  const badge = document.getElementById('detail-badge');
-  badge.textContent = q.type === 'main' ? 'Главный квест' : 'Доп. квест';
-  badge.className = `detail-type-badge ${q.type === 'main' ? 'main-badge' : 'side-badge'}`;
-
-  document.getElementById('detail-title').textContent = q.title;
-  document.getElementById('detail-description').textContent = q.description || '';
-
-  const ngSection = document.getElementById('detail-next-goal-section');
-  if (q.nextGoal) {
-    ngSection.style.display = '';
-    document.getElementById('detail-next-goal').textContent = q.nextGoal;
-  } else {
-    ngSection.style.display = 'none';
-  }
-
-  const pSection = document.getElementById('detail-progress-section');
-  const pct = progressPercent(q.progress);
-  if (pct !== null) {
-    pSection.style.display = '';
-    document.getElementById('detail-progress-wrap').innerHTML = `
-      <div class="progress-label" style="margin-bottom:6px">
-        <span>${progressLabel(q.progress)}</span>
-        <span>${pct}%</span>
-      </div>
-      <div class="progress-bar-track">
-        <div class="progress-bar-fill" style="width:${pct}%"></div>
-      </div>`;
-  } else {
-    pSection.style.display = 'none';
-  }
-
-  const dlSection = document.getElementById('detail-deadline-section');
-  if (q.deadline) {
-    dlSection.style.display = '';
-    const dl = formatDeadline(q.deadline);
-    document.getElementById('detail-deadline').innerHTML = `<span class="${dl.cls}">${dl.text}</span>`;
-  } else {
-    dlSection.style.display = 'none';
-  }
-
-  // Sub-quests
-  const subBtn = document.getElementById('btn-add-sub');
-  subBtn.disabled = (q.subQuests.length >= MAX_SUB);
-  renderSubQuests(q);
-
-  document.getElementById('detail-modal').hidden = false;
-}
-
-function renderSubQuests(q) {
-  const list = document.getElementById('sub-quest-list');
-  list.innerHTML = '';
-  if (!q.subQuests.length) {
-    list.innerHTML = '<p class="sub-quest-empty">Нет вложенных квестов</p>';
-    return;
-  }
-  q.subQuests.forEach(sub => {
-    const pct = progressPercent(sub.progress);
-    const item = document.createElement('div');
-    item.className = 'sub-quest-item';
-    item.innerHTML = `
-      <div class="sub-quest-item-content">
-        <div class="sub-quest-item-title">${escHtml(sub.title)}</div>
-        ${sub.nextGoal ? `<div class="sub-quest-item-goal">⚡ ${escHtml(sub.nextGoal)}</div>` : ''}
-        ${pct !== null ? `
-          <div class="sub-quest-progress">
-            <div class="progress-bar-track" style="margin-top:6px">
-              <div class="progress-bar-fill" style="width:${pct}%"></div>
-            </div>
-            <div style="font-size:11px;color:var(--text-dim);margin-top:3px">${progressLabel(sub.progress)}</div>
-          </div>` : ''}
-      </div>
-      <div class="sub-quest-item-actions">
-        <button class="sub-delete-btn" data-sub-id="${sub.id}" title="Удалить">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-          </svg>
-        </button>
-      </div>`;
-
-    item.querySelector('.sub-quest-item-content').addEventListener('click', () => {
-      closeDetailModal();
-      setTimeout(() => openEditModal(sub.id), 50);
-    });
-
-    item.querySelector('.sub-delete-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      if (confirm(`Удалить вложенный квест «${sub.title}»?`)) {
-        deleteSubQuest(q.id, sub.id);
-      }
-    });
-
-    list.appendChild(item);
-  });
-}
-
 function deleteSubQuest(parentId, subId) {
   const parent = findQuest(parentId);
   if (!parent) return;
   const idx = parent.subQuests.findIndex(s => s.id === subId);
   if (idx !== -1) parent.subQuests.splice(idx, 1);
   save();
-  renderSubQuests(parent);
-  document.getElementById('btn-add-sub').disabled = parent.subQuests.length >= MAX_SUB;
-  showToast('Вложенный квест удалён', 'success');
-}
-
-function closeDetailModal() {
-  document.getElementById('detail-modal').hidden = true;
-  state.detailQuestId = null;
   render();
+  showToast('Вложенный квест удалён', 'success');
 }
 
 /* ── Export ── */
@@ -656,32 +656,6 @@ function wireEvents() {
     if (e.target === e.currentTarget) closeQuestModal();
   });
 
-  // Detail modal
-  document.getElementById('detail-close').addEventListener('click', closeDetailModal);
-  document.getElementById('detail-modal').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeDetailModal();
-  });
-  document.getElementById('detail-edit').addEventListener('click', () => {
-    const id = state.detailQuestId;
-    closeDetailModal();
-    setTimeout(() => openEditModal(id), 50);
-  });
-  document.getElementById('detail-delete').addEventListener('click', () => {
-    const id = state.detailQuestId;
-    const q = findQuest(id);
-    if (!q) return;
-    if (confirm(`Удалить квест «${q.title}»?`)) {
-      closeDetailModal();
-      deleteQuest(id);
-      showToast('Квест удалён', 'success');
-    }
-  });
-  document.getElementById('btn-add-sub').addEventListener('click', () => {
-    const parentId = state.detailQuestId;
-    closeDetailModal();
-    setTimeout(() => openAddModal('side', parentId), 50);
-  });
-
   // Export
   document.getElementById('btn-export').addEventListener('click', openExportModal);
   document.getElementById('export-close').addEventListener('click', () => {
@@ -704,21 +678,17 @@ function wireEvents() {
         document.getElementById('export-modal').hidden = true;
       } else if (!document.getElementById('quest-modal').hidden) {
         closeQuestModal();
-      } else if (!document.getElementById('detail-modal').hidden) {
-        closeDetailModal();
       } else {
         tg.BackButton.hide();
       }
     });
 
-    // Show/hide Telegram back button based on modals
     const observer = new MutationObserver(() => {
       const anyOpen = !document.getElementById('quest-modal').hidden ||
-                      !document.getElementById('detail-modal').hidden ||
                       !document.getElementById('export-modal').hidden;
       anyOpen ? tg.BackButton.show() : tg.BackButton.hide();
     });
-    ['quest-modal', 'detail-modal', 'export-modal'].forEach(id => {
+    ['quest-modal', 'export-modal'].forEach(id => {
       observer.observe(document.getElementById(id), { attributes: true, attributeFilter: ['hidden'] });
     });
   }
