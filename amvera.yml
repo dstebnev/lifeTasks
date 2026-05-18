@@ -1,0 +1,12 @@
+meta:
+  environment: nodejs
+  toolVersion: "20"
+
+build:
+  npmBuild:
+    command: npm ci --omit=dev
+
+run:
+  persistenceMount: /data
+  appPort: 3000
+  command: node server.js
