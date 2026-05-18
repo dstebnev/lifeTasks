@@ -1,0 +1,19 @@
+{
+  "name": "lifequest",
+  "version": "1.0.0",
+  "description": "Telegram Mini App — gamified life quests with weekly reports",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

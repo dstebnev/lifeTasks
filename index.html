@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>LifeQuest</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-title">
+        <span class="header-icon">⚔️</span>
+        <span>LifeQuest</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="btn-export" title="Экспорт квестов">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btn-add-quest" title="Добавить квест">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+            <line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="main">
+        <span class="tab-icon">🗡️</span>
+        <span>Главные</span>
+        <span class="tab-count" id="main-count">0/3</span>
+      </button>
+      <button class="tab" data-tab="side">
+        <span class="tab-icon">📜</span>
+        <span>Дополнительные</span>
+        <span class="tab-count" id="side-count">0</span>
+      </button>
+    </nav>
+
+    <!-- Quest List -->
+    <main class="quest-list" id="quest-list">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">🗺️</div>
+        <p>Нет активных квестов</p>
+        <p class="empty-sub">Нажмите + чтобы начать своё приключение</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Add/Edit Quest -->
+  <div class="modal-overlay" id="quest-modal" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modal-title">Новый квест</h2>
+        <button class="btn-icon" id="modal-close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="quest-id" />
+        <input type="hidden" id="quest-parent-id" />
+
+        <div class="form-group">
+          <label class="form-label">Тип квеста</label>
+          <div class="radio-group" id="quest-type-group">
+            <label class="radio-label">
+              <input type="radio" name="quest-type" value="main" /> Главный
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="quest-type" value="side" checked /> Дополнительный
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="quest-title">Название квеста *</label>
+          <input class="form-input" type="text" id="quest-title" placeholder="Например: Накопить на дом" maxlength="80" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="quest-description">Описание</label>
+          <textarea class="form-input form-textarea" id="quest-description" placeholder="Опишите свой квест подробнее..." maxlength="500" rows="3"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="quest-next-goal">Ближайшая цель</label>
+          <input class="form-input" type="text" id="quest-next-goal" placeholder="Следующий шаг к цели" maxlength="200" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Прогресс</label>
+          <div class="progress-type-row">
+            <label class="radio-label">
+              <input type="radio" name="progress-type" value="none" checked /> Без прогресса
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="progress-type" value="percent" /> % (0–100)
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="progress-type" value="numeric" /> Числовой
+            </label>
+          </div>
+          <div id="progress-fields" class="progress-fields hidden">
+            <div class="progress-numeric-row" id="progress-percent-row" hidden>
+              <input class="form-input" type="number" id="progress-percent-val" min="0" max="100" placeholder="0" />
+              <span class="progress-unit">%</span>
+            </div>
+            <div class="progress-numeric-row" id="progress-numeric-row" hidden>
+              <input class="form-input" type="number" id="progress-current" min="0" placeholder="Текущее" />
+              <span class="progress-sep">/</span>
+              <input class="form-input" type="number" id="progress-target" min="1" placeholder="Цель" />
+              <input class="form-input progress-unit-input" type="text" id="progress-unit" placeholder="₽" maxlength="10" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="quest-deadline">Дедлайн</label>
+          <input class="form-input" type="date" id="quest-deadline" />
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-secondary" id="modal-cancel">Отмена</button>
+          <button class="btn btn-primary" id="modal-save">Сохранить квест</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Quest Detail -->
+  <div class="modal-overlay" id="detail-modal" hidden>
+    <div class="modal modal-detail">
+      <div class="modal-header">
+        <div class="detail-type-badge" id="detail-badge"></div>
+        <button class="btn-icon" id="detail-close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <h2 class="detail-title" id="detail-title"></h2>
+        <p class="detail-description" id="detail-description"></p>
+
+        <div class="detail-section" id="detail-next-goal-section">
+          <div class="detail-section-label">⚡ Ближайшая цель</div>
+          <div class="detail-next-goal" id="detail-next-goal"></div>
+        </div>
+
+        <div class="detail-section" id="detail-progress-section">
+          <div class="detail-section-label">📊 Прогресс</div>
+          <div class="detail-progress-wrap" id="detail-progress-wrap"></div>
+        </div>
+
+        <div class="detail-section" id="detail-deadline-section">
+          <div class="detail-section-label">⏳ Дедлайн</div>
+          <div class="detail-deadline" id="detail-deadline"></div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-label">
+            <span>📋 Вложенные квесты</span>
+            <button class="btn-add-sub" id="btn-add-sub">+ Добавить</button>
+          </div>
+          <div class="sub-quest-list" id="sub-quest-list"></div>
+        </div>
+
+        <div class="detail-actions">
+          <button class="btn btn-secondary" id="detail-edit">Редактировать</button>
+          <button class="btn btn-danger" id="detail-delete">Удалить квест</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Modal -->
+  <div class="modal-overlay" id="export-modal" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Экспорт квестов</h2>
+        <button class="btn-icon" id="export-close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="export-hint">Скопируйте текст ниже и вставьте в нейросеть для получения рекомендаций по вашим квестам.</p>
+        <textarea class="form-input export-textarea" id="export-text" readonly rows="14"></textarea>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btn-copy-export">Копировать</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
