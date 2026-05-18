@@ -14,31 +14,36 @@ const MAX_ACTIVE   = 6;
 const MAX_SUB      = 10;
 const STORAGE_KEY  = 'lifequest_data';
 
-/* ── Server sync ── */
-const tgUser   = tg?.initDataUnsafe?.user;
-const USER_ID  = tgUser?.id ? String(tgUser.id) : null;
-const CHAT_ID  = tgUser?.id ?? null; // DM chat_id === user_id in Telegram
+/* ── Server sync ──────────────────────────────────────────────────────────
+   Telegram подписывает initData своим ключом — сервер проверяет подпись
+   и сам достаёт userId. Клиент не передаёт userId явно.
+────────────────────────────────────────────────────────────────────────── */
+const INIT_DATA = tg?.initData || '';   // подписанная строка от Telegram
 
 let _syncTimer = null;
 
+function authHeaders() {
+  return { 'Content-Type': 'application/json', 'X-Init-Data': INIT_DATA };
+}
+
 async function syncToServer() {
-  if (!USER_ID) return;
+  if (!INIT_DATA) return;
   try {
-    await fetch(`/api/quests/${USER_ID}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quests: state.quests, chatId: CHAT_ID }),
+    await fetch('/api/quests', {
+      method:  'POST',
+      headers: authHeaders(),
+      body:    JSON.stringify({ quests: state.quests }),
     });
   } catch { /* offline — localStorage keeps data safe */ }
 }
 
 async function loadFromServer() {
-  if (!USER_ID) return false;
+  if (!INIT_DATA) return false;
   try {
-    const res  = await fetch(`/api/quests/${USER_ID}`);
+    const res  = await fetch('/api/quests', { headers: { 'X-Init-Data': INIT_DATA } });
+    if (!res.ok) return false;
     const data = await res.json();
-    // found:true означает что сервер знает этого пользователя — его данные авторитетны,
-    // даже если quests пустой (пользователь мог удалить все квесты).
+    // found:true → сервер знает пользователя, его данные авторитетны
     if (data.found && Array.isArray(data.quests)) {
       state.quests = data.quests;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.quests));

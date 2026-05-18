@@ -4,12 +4,14 @@ require('dotenv').config();
 const express = require('express');
 const cron    = require('node-cron');
 const fetch   = require('node-fetch');
+const crypto  = require('crypto');
 const fs      = require('fs');
 const path    = require('path');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const PORT      = parseInt(process.env.PORT || '3000', 10);
-const TZ        = process.env.TZ || 'Europe/Moscow';
+const BOT_TOKEN    = process.env.BOT_TOKEN;
+const PORT         = parseInt(process.env.PORT || '3000', 10);
+const TZ           = process.env.TZ || 'Europe/Moscow';
+const REPORT_TOKEN = process.env.REPORT_TOKEN || '';
 
 // /data is Amvera's persistenceMount — survives redeploys.
 // Locally falls back to project directory.
@@ -19,6 +21,51 @@ const DATA_FILE = path.join(DATA_DIR, 'data.json');
 if (!BOT_TOKEN) {
   console.error('❌  BOT_TOKEN is not set. Copy .env.example → .env and fill it in.');
   process.exit(1);
+}
+
+/* ── Telegram initData validation ─────────────────────────────────────────
+   Docs: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+   Returns parsed user object or null if signature is invalid.
+────────────────────────────────────────────────────────────────────────── */
+function validateInitData(initData) {
+  if (!initData) return null;
+  try {
+    const params = new URLSearchParams(initData);
+    const receivedHash = params.get('hash');
+    if (!receivedHash) return null;
+
+    params.delete('hash');
+
+    const dataCheckString = Array.from(params.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+
+    const secretKey = crypto.createHmac('sha256', 'WebAppData')
+      .update(BOT_TOKEN)
+      .digest();
+
+    const expectedHash = crypto.createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
+
+    if (expectedHash !== receivedHash) return null;
+
+    const userStr = params.get('user');
+    return userStr ? JSON.parse(userStr) : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ── Auth middleware — extracts userId from verified Telegram initData ── */
+function auth(req, res, next) {
+  const initData = req.headers['x-init-data'];
+  const user = validateInitData(initData);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  req.userId = String(user.id);
+  req.chatId = user.id;
+  next();
 }
 
 /* ── Data helpers ── */
@@ -38,40 +85,41 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname)));
 
-/* GET /api/quests/:userId — load quests for user */
-app.get('/api/quests/:userId', (req, res) => {
+/* GET /api/quests — load quests for authenticated user */
+app.get('/api/quests', auth, (req, res) => {
   const data = loadData();
-  const record = data[req.params.userId];
+  const record = data[req.userId];
   // found:false → пользователь ещё не сохранял данные → клиент оставит localStorage
   // found:true  → данные на сервере авторитетны (даже если quests: [])
-  if (record) {
-    res.json({ found: true, quests: record.quests });
-  } else {
-    res.json({ found: false, quests: [] });
-  }
+  res.json(record
+    ? { found: true,  quests: record.quests }
+    : { found: false, quests: [] });
 });
 
-/* POST /api/quests/:userId — save quests for user */
-app.post('/api/quests/:userId', (req, res) => {
-  const { quests, chatId } = req.body;
+/* POST /api/quests — save quests for authenticated user */
+app.post('/api/quests', auth, (req, res) => {
+  const { quests } = req.body;
   if (!Array.isArray(quests)) return res.status(400).json({ error: 'quests must be array' });
 
   const data = loadData();
-  data[req.params.userId] = {
+  data[req.userId] = {
     quests,
-    chatId: chatId ?? req.params.userId, // DM chat_id == user_id in Telegram
+    chatId: req.chatId,
     updatedAt: new Date().toISOString(),
   };
   saveData(data);
   res.json({ ok: true });
 });
 
-/* POST /api/report/test/:userId — manually trigger report for one user */
-app.post('/api/report/test/:userId', async (req, res) => {
+/* POST /api/report/test — manually trigger report for the authenticated user.
+   Requires REPORT_TOKEN header matching the env variable (if configured). */
+app.post('/api/report/test', auth, async (req, res) => {
+  if (REPORT_TOKEN && req.headers['x-report-token'] !== REPORT_TOKEN) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   const data = loadData();
-  const record = data[req.params.userId];
+  const record = data[req.userId];
   if (!record) return res.status(404).json({ error: 'user not found' });
-
   try {
     await sendReportToUser(record);
     res.json({ ok: true });
