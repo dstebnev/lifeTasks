@@ -251,6 +251,63 @@ async function sendReportToUser(record) {
   return result;
 }
 
+/* ── Daily deadline reminder (Mon–Sat 09:00) ── */
+function getUrgentQuests(quests) {
+  if (!Array.isArray(quests)) return [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return quests.filter(q => {
+    if (q.completed || q.failed || !q.active) return false;
+    if (!q.deadline) return false;
+    const target = new Date(q.deadline + 'T00:00:00');
+    const diff = Math.round((target - today) / 86400000);
+    return diff <= 3;
+  });
+}
+
+function buildDailyReminderText(urgentQuests) {
+  const today = new Date().toLocaleDateString('ru-RU', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+  const lines = [`⚠️ <b>Горящие квесты</b> — ${today}\n`];
+
+  urgentQuests.forEach(q => {
+    const target = new Date(q.deadline + 'T00:00:00');
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const diff = Math.round((target - now) / 86400000);
+    let urgency;
+    if (diff < 0)      urgency = `⛔ Просрочен на ${Math.abs(diff)} дн.`;
+    else if (diff === 0) urgency = '🔥 Срок сегодня!';
+    else                 urgency = `⚠️ Осталось ${diff} дн.`;
+    lines.push(`• <b>${q.title}</b>`);
+    lines.push(`  ${urgency}`);
+    if (q.nextGoal) lines.push(`  ⚡ <i>${q.nextGoal}</i>`);
+  });
+
+  lines.push('\n<i>Откройте LifeQuest и сделайте следующий шаг!</i>');
+  return lines.join('\n');
+}
+
+cron.schedule('0 9 * * 1-6', async () => {
+  console.log(`[${new Date().toISOString()}] Running daily deadline reminder...`);
+  const data = loadData();
+  let sent = 0, skipped = 0;
+  for (const [userId, record] of Object.entries(data)) {
+    const urgent = getUrgentQuests(record.quests || []);
+    if (!urgent.length) { skipped++; continue; }
+    try {
+      const text = buildDailyReminderText(urgent);
+      await telegramPost('sendMessage', { chat_id: record.chatId, text, parse_mode: 'HTML' });
+      sent++;
+      console.log(`  ✓ Deadline reminder sent to user ${userId} (${urgent.length} urgent)`);
+    } catch (e) {
+      console.error(`  ✗ Failed for user ${userId}: ${e.message}`);
+    }
+  }
+  console.log(`Daily reminder done: ${sent} sent, ${skipped} skipped (no urgent quests).`);
+}, { timezone: TZ });
+
 /* ── Sunday cron ── */
 // Runs every Sunday at 10:00 in the configured timezone
 cron.schedule('0 10 * * 0', async () => {

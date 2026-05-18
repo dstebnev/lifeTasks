@@ -84,8 +84,10 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 
 /* ── Quest model ── */
 function makeQuest({ type = 'side', title = '', description = '', nextGoal = '',
-  deadline = '', progress = null, active = true, subQuests = [], completed = false } = {}) {
-  return { id: uid(), type, title, description, nextGoal, deadline, progress, active, subQuests, completed };
+  deadline = '', progress = null, active = true, subQuests = [], completed = false,
+  completedAt = null, failed = false, failedAt = null, failReason = '', unlockedBy = null } = {}) {
+  return { id: uid(), type, title, description, nextGoal, deadline, progress, active,
+           subQuests, completed, completedAt, failed, failedAt, failReason, unlockedBy };
 }
 
 /* progress = null | { type: 'percent', value: 0 } | { type: 'numeric', current: 0, target: 100, unit: '₽' } */
@@ -100,8 +102,15 @@ function findQuest(id, list = state.quests) {
   return null;
 }
 
-function countActiveMain() { return state.quests.filter(q => q.type === 'main' && !q.completed).length; }
-function countActiveSide() { return state.quests.filter(q => q.type === 'side' && q.active && !q.completed).length; }
+function countActiveMain() { return state.quests.filter(q => q.type === 'main' && !q.completed && !q.failed).length; }
+function countActiveSide() { return state.quests.filter(q => q.type === 'side' && q.active && !q.completed && !q.failed).length; }
+
+function isQuestLocked(q) {
+  if (!q.unlockedBy) return false;
+  const prereq = state.quests.find(p => p.id === q.unlockedBy);
+  if (!prereq) return false;
+  return !prereq.completed;
+}
 
 function formatDeadline(dateStr) {
   if (!dateStr) return null;
@@ -143,26 +152,31 @@ function formatNum(n) {
 
 /* ── Render ── */
 function render() {
-  renderQuestList();
+  if (state.activeTab === 'journal') {
+    renderJournal();
+  } else {
+    renderQuestList();
+  }
   renderCounts();
 }
 
 function renderCounts() {
-  const main = state.quests.filter(q => q.type === 'main' && !q.completed).length;
-  const side = state.quests.filter(q => q.type === 'side' && !q.completed).length;
+  const main = state.quests.filter(q => q.type === 'main' && !q.completed && !q.failed).length;
+  const side = state.quests.filter(q => q.type === 'side' && !q.completed && !q.failed).length;
+  const journal = state.quests.filter(q => q.completed || q.failed).length;
   document.getElementById('main-count').textContent = `${main}/${MAX_MAIN}`;
   document.getElementById('side-count').textContent = side;
+  document.getElementById('journal-count').textContent = journal;
 }
 
 function renderQuestList() {
   const container = document.getElementById('quest-list');
   const tab = state.activeTab;
-  const active = state.quests.filter(q => q.type === tab && !q.completed);
-  const completed = state.quests.filter(q => q.type === tab && q.completed);
+  const list = state.quests.filter(q => q.type === tab && !q.completed && !q.failed);
 
   container.innerHTML = '';
 
-  if (active.length === 0 && completed.length === 0) {
+  if (list.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">${tab === 'main' ? '🗡️' : '📜'}</div>
@@ -172,21 +186,81 @@ function renderQuestList() {
     return;
   }
 
-  active.forEach(q => container.appendChild(buildQuestCard(q)));
+  list.forEach(q => container.appendChild(buildQuestCard(q)));
+}
 
-  if (completed.length > 0) {
-    const sep = document.createElement('div');
-    sep.className = 'completed-section-header';
-    sep.textContent = '✓ Завершённые квесты';
-    container.appendChild(sep);
-    completed.forEach(q => container.appendChild(buildQuestCard(q)));
+function renderJournal() {
+  const container = document.getElementById('quest-list');
+  const entries = state.quests
+    .filter(q => q.completed || q.failed)
+    .sort((a, b) => {
+      const aDate = a.completedAt || a.failedAt || '';
+      const bDate = b.completedAt || b.failedAt || '';
+      return bDate.localeCompare(aDate);
+    });
+
+  container.innerHTML = '';
+
+  if (entries.length === 0) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">📖</div>
+      <p>История пуста</p>
+      <p class="empty-sub">Завершённые и закрытые квесты появятся здесь</p>
+    </div>`;
+    return;
   }
+
+  entries.forEach(q => container.appendChild(buildJournalEntry(q)));
+}
+
+function buildJournalEntry(q) {
+  const div = document.createElement('div');
+  div.className = `journal-entry ${q.failed ? 'failed' : 'completed'}`;
+
+  const date = q.completedAt || q.failedAt;
+  const dateStr = date
+    ? new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+  const typeLabel = q.type === 'main' ? 'Главный' : 'Доп.';
+  const icon = q.type === 'main' ? '⚔️' : '📜';
+  const outcomeLabel = q.failed ? '✗ Закрыт' : '✓ Выполнен';
+
+  div.innerHTML = `
+    <div class="je-header">
+      <span class="je-icon">${icon}</span>
+      <div class="je-info">
+        <div class="je-title">${escHtml(q.title)}</div>
+        <div class="je-meta">
+          <span>${typeLabel} квест</span>
+          ${dateStr ? `<span>·</span><span class="je-date">${dateStr}</span>` : ''}
+        </div>
+        ${q.failReason ? `<div class="je-reason">💬 ${escHtml(q.failReason)}</div>` : ''}
+        ${q.description && !q.failReason ? `<div class="je-reason">${escHtml(q.description)}</div>` : ''}
+      </div>
+      <span class="je-outcome ${q.failed ? 'failed' : 'completed'}">${outcomeLabel}</span>
+    </div>
+    <div class="je-actions">
+      <button class="btn btn-secondary je-revive-btn">↩ Возобновить</button>
+      <button class="btn btn-danger je-delete-btn">Удалить</button>
+    </div>`;
+
+  div.querySelector('.je-revive-btn').addEventListener('click', () => reviveQuest(q.id));
+  div.querySelector('.je-delete-btn').addEventListener('click', () => {
+    if (confirm(`Удалить «${q.title}» из истории?`)) {
+      state.expandedQuestId = null;
+      deleteQuest(q.id);
+      showToast('Запись удалена', 'success');
+    }
+  });
+
+  return div;
 }
 
 function buildQuestCard(q) {
   const div = document.createElement('div');
   const isExpanded = q.id === state.expandedQuestId;
-  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active && !q.completed ? ' inactive' : ''}${q.completed ? ' completed' : ''}${isExpanded ? ' expanded' : ''}`;
+  const locked = isQuestLocked(q);
+  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active && !q.completed && !q.failed ? ' inactive' : ''}${q.completed ? ' completed' : ''}${q.failed ? ' completed' : ''}${locked ? ' locked' : ''}${isExpanded ? ' expanded' : ''}`;
   div.dataset.id = q.id;
 
   const dl = q.deadline ? formatDeadline(q.deadline) : null;
@@ -199,13 +273,15 @@ function buildQuestCard(q) {
   }
 
   let activeBadge = '';
-  if (q.type === 'side' && !q.completed) {
+  if (q.type === 'side' && !q.completed && !q.failed && !locked) {
     activeBadge = `<button class="quest-active-toggle ${q.active ? 'active-on' : 'active-off'}" data-action="toggle" data-id="${q.id}">
       ${q.active ? '● Активен' : '○ Неактивен'}
     </button>`;
   }
 
   const completedBadge = q.completed ? `<span class="quest-completed-badge">✓ Завершён</span>` : '';
+  const failedBadge = q.failed ? `<span class="quest-failed-badge">✗ Закрыт</span>` : '';
+  const lockedBadge = locked ? `<span class="quest-locked-badge">🔒 Заблокирован</span>` : '';
   const subBadge = subCount > 0 ? `<span class="quest-sub-badge">📋 ${subCount}</span>` : '';
   const icon = q.type === 'main' ? '⚔️' : '📜';
 
@@ -215,7 +291,7 @@ function buildQuestCard(q) {
       <div class="quest-info">
         <div class="quest-type-label">${q.type === 'main' ? 'Главный квест' : 'Доп. квест'}</div>
         <div class="quest-title">${escHtml(q.title)}</div>
-        <div class="quest-card-meta">${completedBadge}${deadlineBadge}${activeBadge}${subBadge}</div>
+        <div class="quest-card-meta">${completedBadge}${failedBadge}${lockedBadge}${deadlineBadge}${activeBadge}${subBadge}</div>
       </div>
       <button class="quest-chevron" aria-label="Развернуть">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -294,10 +370,19 @@ function buildQuestCard(q) {
     });
   }
 
+  const failBtn2 = div.querySelector('.btn-quest-fail');
+  if (failBtn2) {
+    failBtn2.addEventListener('click', e => {
+      e.stopPropagation();
+      openFailModal(q.id);
+    });
+  }
+
   return div;
 }
 
 function buildQuestBody(q) {
+  const locked = isQuestLocked(q);
   const pct = progressPercent(q.progress);
   let html = '';
 
@@ -332,16 +417,25 @@ function buildQuestBody(q) {
     <div class="qb-sub-list">${buildSubQuestItems(q)}</div>
   </div>`;
 
-  if (!q.completed) {
-    html += `<button class="btn btn-complete btn-quest-complete">✓ Завершить квест</button>`;
+  if (!q.completed && !q.failed) {
+    if (locked) {
+      const prereq = state.quests.find(p => p.id === q.unlockedBy);
+      html += `<div class="quest-lock-info">🔒 Заблокирован. Сначала выполните: <b>${escHtml(prereq?.title || '')}</b></div>`;
+    } else {
+      html += `<button class="btn btn-complete btn-quest-complete">✓ Завершить квест</button>`;
+    }
   }
 
+  const failBtn = (!q.completed && !q.failed && !locked)
+    ? `<button class="btn btn-quest-fail" style="width:100%;margin-top:6px;background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:13px;padding:8px;border-radius:var(--radius-sm);">Закрыть без выполнения</button>`
+    : '';
+
   html += `<div class="qb-actions">
-    ${!q.completed
+    ${!q.completed && !q.failed
       ? `<button class="btn btn-secondary btn-quest-edit">Редактировать</button>`
       : `<button class="btn btn-secondary btn-quest-revive">↩ Возобновить</button>`}
     <button class="btn btn-danger btn-quest-delete">Удалить квест</button>
-  </div>`;
+  </div>${failBtn}`;
 
   return html;
 }
@@ -427,6 +521,21 @@ function deleteQuest(id) {
 }
 
 /* ── Quest Form Modal ── */
+function populateUnlockDropdown(excludeId) {
+  const sel = document.getElementById('quest-unlock-by');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— Без зависимости —</option>';
+  state.quests
+    .filter(q => q.id !== excludeId && !q.completed && !q.failed)
+    .forEach(q => {
+      const opt = document.createElement('option');
+      opt.value = q.id;
+      opt.textContent = q.title.length > 45 ? q.title.slice(0, 45) + '…' : q.title;
+      if (q.id === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+}
+
 function openAddModal(type = 'side', parentId = null) {
   state.editingQuestId = null;
 
@@ -442,6 +551,10 @@ function openAddModal(type = 'side', parentId = null) {
   document.getElementById('progress-target').value = '';
   document.getElementById('progress-unit').value = '';
   updateProgressFields();
+
+  document.getElementById('quest-unlock-by').value = '';
+  populateUnlockDropdown(null);
+  document.getElementById('unlock-group').style.display = parentId ? 'none' : '';
 
   const typeGroup = document.getElementById('quest-type-group');
   if (parentId) {
@@ -488,6 +601,10 @@ function openEditModal(id) {
   }
   updateProgressFields();
 
+  document.getElementById('quest-unlock-by').value = q.unlockedBy || '';
+  populateUnlockDropdown(q.id);
+  document.getElementById('unlock-group').style.display = '';
+
   document.getElementById('quest-modal').hidden = false;
   setTimeout(() => document.getElementById('quest-title').focus(), 100);
 }
@@ -526,6 +643,7 @@ function saveQuestForm() {
     }
     q.type = type; q.title = title; q.description = desc;
     q.nextGoal = nextGoal; q.deadline = deadline; q.progress = progress;
+    q.unlockedBy = document.getElementById('quest-unlock-by').value || null;
   } else if (parentId) {
     // new sub-quest
     const parent = findQuest(parentId);
@@ -543,7 +661,8 @@ function saveQuestForm() {
     if (type === 'side' && countActiveSide() >= MAX_ACTIVE) {
       showToast(`Максимум ${MAX_ACTIVE} активных доп. квестов. Деактивируйте один.`, 'error'); return;
     }
-    const q = makeQuest({ type, title, description: desc, nextGoal, deadline, progress, active: true });
+    const q = makeQuest({ type, title, description: desc, nextGoal, deadline, progress, active: true,
+      unlockedBy: document.getElementById('quest-unlock-by').value || null });
     state.quests.push(q);
   }
 
@@ -586,7 +705,7 @@ function deleteSubQuest(parentId, subId) {
 
 function completeQuest(id) {
   const q = findQuest(id);
-  if (!q || q.completed) return;
+  if (!q || q.completed || q.failed || isQuestLocked(q)) return;
 
   tg?.HapticFeedback?.notificationOccurred('success');
 
@@ -603,24 +722,61 @@ function completeQuest(id) {
   state.expandedQuestId = null;
   setTimeout(() => {
     q.completed = true;
+    q.completedAt = new Date().toISOString();
     if (q.type === 'side') q.active = false;
     save();
     render();
     showToast('Квест выполнен! 🎉', 'success');
+    // Notify about newly unlocked quests
+    const unlocked = state.quests.filter(u => u.unlockedBy === id && !u.completed && !u.failed);
+    if (unlocked.length > 0) {
+      setTimeout(() => showToast(`🔓 Разблокирован: «${unlocked[0].title}»`, 'success'), 1200);
+    }
   }, 650);
 }
 
 function reviveQuest(id) {
   const q = findQuest(id);
-  if (!q || !q.completed) return;
+  if (!q) return;
 
   tg?.HapticFeedback?.impactOccurred('medium');
 
   q.completed = false;
+  q.completedAt = null;
+  q.failed = false;
+  q.failedAt = null;
+  q.failReason = '';
   if (q.type === 'side' && countActiveSide() < MAX_ACTIVE) q.active = true;
   save();
   render();
   showToast(`«${q.title}» возобновлён`, 'success');
+}
+
+function failQuest(id, reason) {
+  const q = findQuest(id);
+  if (!q || q.completed || q.failed) return;
+
+  tg?.HapticFeedback?.notificationOccurred('warning');
+
+  q.failed = true;
+  q.failedAt = new Date().toISOString();
+  q.failReason = reason;
+  if (q.type === 'side') q.active = false;
+  state.expandedQuestId = null;
+  save();
+  render();
+  showToast('Квест закрыт', 'success');
+}
+
+function openFailModal(id) {
+  document.getElementById('fail-quest-id').value = id;
+  document.getElementById('fail-reason').value = '';
+  document.getElementById('fail-modal').hidden = false;
+  setTimeout(() => document.getElementById('fail-reason').focus(), 100);
+}
+
+function closeFailModal() {
+  document.getElementById('fail-modal').hidden = true;
 }
 
 /* ── Export ── */
@@ -706,6 +862,9 @@ function wireEvents() {
       document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.activeTab = btn.dataset.tab;
+      // Hide add button when journal tab is active
+      document.getElementById('btn-add-quest').style.display =
+        state.activeTab === 'journal' ? 'none' : '';
       render();
     });
   });
@@ -743,11 +902,38 @@ function wireEvents() {
       .catch(() => showToast('Не удалось скопировать', 'error'));
   });
 
+  // Fail modal
+  document.getElementById('fail-close').addEventListener('click', closeFailModal);
+  document.getElementById('fail-cancel').addEventListener('click', closeFailModal);
+  document.getElementById('fail-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeFailModal();
+  });
+  document.getElementById('fail-confirm').addEventListener('click', () => {
+    const id = document.getElementById('fail-quest-id').value;
+    const reason = document.getElementById('fail-reason').value.trim();
+    closeFailModal();
+    failQuest(id, reason);
+  });
+
+  // Notify button
+  document.getElementById('btn-notify').addEventListener('click', async () => {
+    if (!INIT_DATA) { showToast('Доступно только в Telegram', 'error'); return; }
+    try {
+      showToast('Отправляю отчёт…', '');
+      const res = await fetch('/api/report/test', { method: 'POST', headers: authHeaders() });
+      const data = await res.json();
+      if (data.ok) showToast('Отчёт отправлен в бот ✓', 'success');
+      else showToast('Ошибка отправки', 'error');
+    } catch { showToast('Ошибка отправки', 'error'); }
+  });
+
   // Back button (Telegram)
   if (tg) {
     tg.BackButton.onClick(() => {
       if (!document.getElementById('export-modal').hidden) {
         document.getElementById('export-modal').hidden = true;
+      } else if (!document.getElementById('fail-modal').hidden) {
+        closeFailModal();
       } else if (!document.getElementById('quest-modal').hidden) {
         closeQuestModal();
       } else {
@@ -757,10 +943,11 @@ function wireEvents() {
 
     const observer = new MutationObserver(() => {
       const anyOpen = !document.getElementById('quest-modal').hidden ||
+                      !document.getElementById('fail-modal').hidden ||
                       !document.getElementById('export-modal').hidden;
       anyOpen ? tg.BackButton.show() : tg.BackButton.hide();
     });
-    ['quest-modal', 'export-modal'].forEach(id => {
+    ['quest-modal', 'fail-modal', 'export-modal'].forEach(id => {
       observer.observe(document.getElementById(id), { attributes: true, attributeFilter: ['hidden'] });
     });
   }
