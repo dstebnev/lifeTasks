@@ -377,6 +377,87 @@ a { color: var(--gold); }
   filter: blur(2px);
 }
 
+/* ── Quest Completion ── */
+@keyframes questCompletePulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0   rgba(76,175,107,0);    border-color: var(--border); }
+  30%  { transform: scale(1.03); box-shadow: 0 0 0 12px rgba(76,175,107,0.45); border-color: var(--green); }
+  65%  { transform: scale(0.99); box-shadow: 0 0 0 5px  rgba(76,175,107,0.15); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(76,175,107,0); }
+}
+
+@keyframes completeBannerFloat {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.75); }
+  18%  { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  55%  { opacity: 1; transform: translate(-50%, -68%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -105%) scale(0.92); }
+}
+
+.quest-card.completing {
+  animation: questCompletePulse 0.65s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.quest-complete-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  background: var(--green);
+  color: #0e0f14;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 7px 18px;
+  border-radius: var(--radius);
+  z-index: 20;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: completeBannerFloat 0.85s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.quest-card.completed { opacity: 0.62; }
+.quest-card.completed::before { background: var(--green) !important; }
+.quest-card.completed:hover {
+  border-color: rgba(76,175,107,0.4);
+  box-shadow: 0 0 0 1px rgba(76,175,107,0.3), var(--shadow);
+  opacity: 0.8;
+}
+
+.quest-completed-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(76,175,107,0.4);
+  border-radius: 20px;
+  padding: 2px 8px;
+}
+
+.completed-section-header {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 4px 2px;
+}
+
+.btn-complete {
+  width: 100%;
+  background: var(--green-dim);
+  border: 1px solid rgba(76,175,107,0.4);
+  color: var(--green);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  transition: background var(--transition), opacity var(--transition), transform var(--transition);
+}
+.btn-complete:hover { background: rgba(76,175,107,0.25); }
+.btn-complete:active { opacity: 0.8; transform: scale(0.98); }
+
 /* ── Modal ── */
 .modal-overlay {
   position: fixed;

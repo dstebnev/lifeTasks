@@ -84,8 +84,8 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 
 /* ── Quest model ── */
 function makeQuest({ type = 'side', title = '', description = '', nextGoal = '',
-  deadline = '', progress = null, active = true, subQuests = [] } = {}) {
-  return { id: uid(), type, title, description, nextGoal, deadline, progress, active, subQuests };
+  deadline = '', progress = null, active = true, subQuests = [], completed = false } = {}) {
+  return { id: uid(), type, title, description, nextGoal, deadline, progress, active, subQuests, completed };
 }
 
 /* progress = null | { type: 'percent', value: 0 } | { type: 'numeric', current: 0, target: 100, unit: '₽' } */
@@ -100,8 +100,8 @@ function findQuest(id, list = state.quests) {
   return null;
 }
 
-function countActiveMain() { return state.quests.filter(q => q.type === 'main').length; }
-function countActiveSide() { return state.quests.filter(q => q.type === 'side' && q.active).length; }
+function countActiveMain() { return state.quests.filter(q => q.type === 'main' && !q.completed).length; }
+function countActiveSide() { return state.quests.filter(q => q.type === 'side' && q.active && !q.completed).length; }
 
 function formatDeadline(dateStr) {
   if (!dateStr) return null;
@@ -148,8 +148,8 @@ function render() {
 }
 
 function renderCounts() {
-  const main = state.quests.filter(q => q.type === 'main').length;
-  const side = state.quests.filter(q => q.type === 'side').length;
+  const main = state.quests.filter(q => q.type === 'main' && !q.completed).length;
+  const side = state.quests.filter(q => q.type === 'side' && !q.completed).length;
   document.getElementById('main-count').textContent = `${main}/${MAX_MAIN}`;
   document.getElementById('side-count').textContent = side;
 }
@@ -157,11 +157,12 @@ function renderCounts() {
 function renderQuestList() {
   const container = document.getElementById('quest-list');
   const tab = state.activeTab;
-  const list = state.quests.filter(q => q.type === tab);
+  const active = state.quests.filter(q => q.type === tab && !q.completed);
+  const completed = state.quests.filter(q => q.type === tab && q.completed);
 
   container.innerHTML = '';
 
-  if (list.length === 0) {
+  if (active.length === 0 && completed.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">${tab === 'main' ? '🗡️' : '📜'}</div>
@@ -171,16 +172,21 @@ function renderQuestList() {
     return;
   }
 
-  list.forEach(q => {
-    const card = buildQuestCard(q);
-    container.appendChild(card);
-  });
+  active.forEach(q => container.appendChild(buildQuestCard(q)));
+
+  if (completed.length > 0) {
+    const sep = document.createElement('div');
+    sep.className = 'completed-section-header';
+    sep.textContent = '✓ Завершённые квесты';
+    container.appendChild(sep);
+    completed.forEach(q => container.appendChild(buildQuestCard(q)));
+  }
 }
 
 function buildQuestCard(q) {
   const div = document.createElement('div');
   const isExpanded = q.id === state.expandedQuestId;
-  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active ? ' inactive' : ''}${isExpanded ? ' expanded' : ''}`;
+  div.className = `quest-card type-${q.type}${q.type === 'side' && !q.active && !q.completed ? ' inactive' : ''}${q.completed ? ' completed' : ''}${isExpanded ? ' expanded' : ''}`;
   div.dataset.id = q.id;
 
   const dl = q.deadline ? formatDeadline(q.deadline) : null;
@@ -193,12 +199,13 @@ function buildQuestCard(q) {
   }
 
   let activeBadge = '';
-  if (q.type === 'side') {
+  if (q.type === 'side' && !q.completed) {
     activeBadge = `<button class="quest-active-toggle ${q.active ? 'active-on' : 'active-off'}" data-action="toggle" data-id="${q.id}">
       ${q.active ? '● Активен' : '○ Неактивен'}
     </button>`;
   }
 
+  const completedBadge = q.completed ? `<span class="quest-completed-badge">✓ Завершён</span>` : '';
   const subBadge = subCount > 0 ? `<span class="quest-sub-badge">📋 ${subCount}</span>` : '';
   const icon = q.type === 'main' ? '⚔️' : '📜';
 
@@ -208,7 +215,7 @@ function buildQuestCard(q) {
       <div class="quest-info">
         <div class="quest-type-label">${q.type === 'main' ? 'Главный квест' : 'Доп. квест'}</div>
         <div class="quest-title">${escHtml(q.title)}</div>
-        <div class="quest-card-meta">${deadlineBadge}${activeBadge}${subBadge}</div>
+        <div class="quest-card-meta">${completedBadge}${deadlineBadge}${activeBadge}${subBadge}</div>
       </div>
       <button class="quest-chevron" aria-label="Развернуть">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -271,6 +278,22 @@ function buildQuestCard(q) {
     });
   });
 
+  const completeBtn = div.querySelector('.btn-quest-complete');
+  if (completeBtn) {
+    completeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      completeQuest(q.id);
+    });
+  }
+
+  const reviveBtn = div.querySelector('.btn-quest-revive');
+  if (reviveBtn) {
+    reviveBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      reviveQuest(q.id);
+    });
+  }
+
   return div;
 }
 
@@ -309,8 +332,14 @@ function buildQuestBody(q) {
     <div class="qb-sub-list">${buildSubQuestItems(q)}</div>
   </div>`;
 
+  if (!q.completed) {
+    html += `<button class="btn btn-complete btn-quest-complete">✓ Завершить квест</button>`;
+  }
+
   html += `<div class="qb-actions">
-    <button class="btn btn-secondary btn-quest-edit">Редактировать</button>
+    ${!q.completed
+      ? `<button class="btn btn-secondary btn-quest-edit">Редактировать</button>`
+      : `<button class="btn btn-secondary btn-quest-revive">↩ Возобновить</button>`}
     <button class="btn btn-danger btn-quest-delete">Удалить квест</button>
   </div>`;
 
@@ -371,9 +400,11 @@ function toggleActive(id) {
   if (!q || q.type !== 'side') return;
 
   if (!q.active && countActiveSide() >= MAX_ACTIVE) {
+    tg?.HapticFeedback?.notificationOccurred('error');
     showToast(`Максимум ${MAX_ACTIVE} активных доп. квестов`, 'error');
     return;
   }
+  tg?.HapticFeedback?.impactOccurred('light');
   q.active = !q.active;
   save();
   render();
@@ -517,6 +548,7 @@ function saveQuestForm() {
   }
 
   if (parentId) state.expandedQuestId = parentId;
+  tg?.HapticFeedback?.impactOccurred('light');
   save();
   render();
   closeQuestModal();
@@ -550,6 +582,45 @@ function deleteSubQuest(parentId, subId) {
   save();
   render();
   showToast('Вложенный квест удалён', 'success');
+}
+
+function completeQuest(id) {
+  const q = findQuest(id);
+  if (!q || q.completed) return;
+
+  tg?.HapticFeedback?.notificationOccurred('success');
+
+  const card = document.querySelector(`.quest-card[data-id="${id}"]`);
+  if (card) {
+    card.classList.add('completing');
+    const banner = document.createElement('div');
+    banner.className = 'quest-complete-banner';
+    banner.textContent = '✓ Выполнено!';
+    card.appendChild(banner);
+    setTimeout(() => banner.remove(), 850);
+  }
+
+  state.expandedQuestId = null;
+  setTimeout(() => {
+    q.completed = true;
+    if (q.type === 'side') q.active = false;
+    save();
+    render();
+    showToast('Квест выполнен! 🎉', 'success');
+  }, 650);
+}
+
+function reviveQuest(id) {
+  const q = findQuest(id);
+  if (!q || !q.completed) return;
+
+  tg?.HapticFeedback?.impactOccurred('medium');
+
+  q.completed = false;
+  if (q.type === 'side' && countActiveSide() < MAX_ACTIVE) q.active = true;
+  save();
+  render();
+  showToast(`«${q.title}» возобновлён`, 'success');
 }
 
 /* ── Export ── */
@@ -611,6 +682,7 @@ function openExportModal() {
 /* ── Toast ── */
 let _toastTimer;
 function showToast(msg, type = '') {
+  if (type === 'error') tg?.HapticFeedback?.notificationOccurred('error');
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = `toast ${type}`;
